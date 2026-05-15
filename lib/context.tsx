@@ -6,7 +6,9 @@ import React, {
   useState,
   useEffect,
   ReactNode,
+  useMemo,
 } from "react";
+
 import { Habit, HabitLog, HabitStats } from "./types";
 import { storage } from "./storage";
 
@@ -14,11 +16,17 @@ interface HabitContextType {
   habits: Habit[];
   logs: HabitLog[];
   stats: Record<string, HabitStats>;
+
   addHabit: (habit: Habit) => void;
+
   updateHabit: (id: string, updates: Partial<Habit>) => void;
+
   deleteHabit: (id: string) => void;
+
   logHabit: (habitId: string, date: string, completed: boolean) => void;
+
   getHabitStats: (habitId: string) => HabitStats;
+
   getTodayLogs: () => HabitLog[];
 }
 
@@ -30,109 +38,135 @@ export function HabitProvider({ children }: { children: ReactNode }) {
   const [stats, setStats] = useState<Record<string, HabitStats>>({});
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Load from localStorage on mount
+  // Load localStorage data
   useEffect(() => {
     const loadedHabits = storage.getHabits();
     const loadedLogs = storage.getLogs();
+
+    const calculatedStats: Record<string, HabitStats> = {};
+
+    loadedHabits.forEach((habit) => {
+      calculatedStats[habit.id] = storage.calculateStats(habit.id);
+    });
+
     setHabits(loadedHabits);
     setLogs(loadedLogs);
-
-    // Calculate stats for all habits
-    const newStats: Record<string, HabitStats> = {};
-    loadedHabits.forEach((habit) => {
-      newStats[habit.id] = storage.calculateStats(habit.id);
-    });
-    setStats(newStats);
+    setStats(calculatedStats);
     setIsLoaded(true);
   }, []);
 
+  // Add Habit
   const addHabit = (habit: Habit) => {
     storage.addHabit(habit);
+
     setHabits((prev) => [...prev, habit]);
+
     setStats((prev) => ({
       ...prev,
       [habit.id]: storage.calculateStats(habit.id),
     }));
   };
 
+  // Update Habit
   const updateHabit = (id: string, updates: Partial<Habit>) => {
     storage.updateHabit(id, updates);
+
     setHabits((prev) =>
-      prev.map((h) => (h.id === id ? { ...h, ...updates } : h)),
+      prev.map((habit) => (habit.id === id ? { ...habit, ...updates } : habit)),
     );
   };
 
+  // Delete Habit
   const deleteHabit = (id: string) => {
     storage.deleteHabit(id);
-    setHabits((prev) => prev.filter((h) => h.id !== id));
-    setLogs((prev) => prev.filter((l) => l.habitId !== id));
+
+    setHabits((prev) => prev.filter((habit) => habit.id !== id));
+
+    setLogs((prev) => prev.filter((log) => log.habitId !== id));
+
     setStats((prev) => {
-      const newStats = { ...prev };
-      delete newStats[id];
-      return newStats;
+      const updatedStats = { ...prev };
+
+      delete updatedStats[id];
+
+      return updatedStats;
     });
   };
 
+  // Log Habit
   const logHabit = (habitId: string, date: string, completed: boolean) => {
     storage.logHabit(habitId, date, completed);
-    const newLog = { habitId, date, completed };
+
+    const newLog: HabitLog = {
+      habitId,
+      date,
+      completed,
+    };
 
     setLogs((prev) => {
-      const existing = prev.find(
-        (l) => l.habitId === habitId && l.date === date,
+      const existingLog = prev.find(
+        (log) => log.habitId === habitId && log.date === date,
       );
-      if (existing) {
-        return prev.map((l) =>
-          l.habitId === habitId && l.date === date ? newLog : l,
+
+      if (existingLog) {
+        return prev.map((log) =>
+          log.habitId === habitId && log.date === date ? newLog : log,
         );
       }
+
       return [...prev, newLog];
     });
 
-    // Recalculate stats for this habit
-    const newStats = storage.calculateStats(habitId);
     setStats((prev) => ({
       ...prev,
-      [habitId]: newStats,
+      [habitId]: storage.calculateStats(habitId),
     }));
   };
 
+  // Get habit stats
   const getHabitStats = (habitId: string): HabitStats => {
     return stats[habitId] || storage.calculateStats(habitId);
   };
 
+  // Get today's logs
   const getTodayLogs = (): HabitLog[] => {
     const today = new Date().toISOString().split("T")[0];
-    return logs.filter((l) => l.date === today && l.completed);
+
+    return logs.filter((log) => log.date === today && log.completed);
   };
 
+  // Memoized context value
+  const value = useMemo(
+    () => ({
+      habits,
+      logs,
+      stats,
+      addHabit,
+      updateHabit,
+      deleteHabit,
+      logHabit,
+      getHabitStats,
+      getTodayLogs,
+    }),
+    [habits, logs, stats],
+  );
+
+  // Prevent hydration mismatch
   if (!isLoaded) {
-    return <div>{children}</div>;
+    return null;
   }
 
   return (
-    <HabitContext.Provider
-      value={{
-        habits,
-        logs,
-        stats,
-        addHabit,
-        updateHabit,
-        deleteHabit,
-        logHabit,
-        getHabitStats,
-        getTodayLogs,
-      }}
-    >
-      {children}
-    </HabitContext.Provider>
+    <HabitContext.Provider value={value}>{children}</HabitContext.Provider>
   );
 }
 
 export function useHabits() {
   const context = useContext(HabitContext);
-  if (context === undefined) {
+
+  if (!context) {
     throw new Error("useHabits must be used within a HabitProvider");
   }
+
   return context;
 }
